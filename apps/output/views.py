@@ -60,6 +60,50 @@ def get_client_identifier(request):
     return client_id_hash, client_ip, user_agent
 
 
+def _restore_multicast_udp_at(stream_url):
+    """Restore VLC-style @ for multicast UDP URLs stored without it."""
+    if stream_url.startswith("udp://") and "udp://@" not in stream_url:
+        try:
+            if ip_address(urlparse(stream_url).hostname).is_multicast:
+                return stream_url.replace("udp://", "udp://@", 1)
+        except ValueError:
+            pass
+    return stream_url
+
+
+def _channel_exposing_provider_url(streams):
+    """Provider URL when the first stream's M3U account opted into expose_direct_source."""
+    from apps.m3u.direct_source import (
+        account_exposes_direct_source,
+        resolve_live_provider_url,
+    )
+
+    streams = list(streams)
+    stream = streams[0] if streams else None
+    if stream is None:
+        return None
+    account = stream.m3u_account
+    if not account_exposes_direct_source(account):
+        return None
+    url = resolve_live_provider_url(stream, account)
+    return url or None
+
+
+def _vod_relation_direct_source(relation, content_path: str) -> str:
+    """Provider URL when the relation's M3U account opted into expose_direct_source."""
+    if not relation:
+        return ""
+    from apps.m3u.direct_source import (
+        account_exposes_direct_source,
+        resolve_vod_provider_url,
+    )
+
+    account = getattr(relation, "m3u_account", None)
+    if not account_exposes_direct_source(account):
+        return ""
+    return resolve_vod_provider_url(relation, content_path) or ""
+
+
 def _direct_m3u_provider_url(streams, allowed_m3u_profiles):
     """Resolve a provider URL for ``direct=true`` M3U output.
 
@@ -261,8 +305,13 @@ def generate_m3u(request, profile_name=None, user=None):
 
         allowed_m3u_profiles = get_allowed_m3u_profiles(user)
 
-    # Prefetch streams only when direct URLs are requested (avoids N+1 per channel)
-    if use_direct_urls:
+    from apps.m3u.direct_source import any_account_exposes_direct_source
+
+    expose_direct_source = any_account_exposes_direct_source()
+
+    # Prefetch streams when direct URLs are requested or any account opted in
+    # to expose provider URLs (avoids N+1 per channel).
+    if use_direct_urls or expose_direct_source:
         channels = channels.prefetch_related(
             Prefetch(
                 'streams',
@@ -330,6 +379,8 @@ def generate_m3u(request, profile_name=None, user=None):
             # first-stream / proxy-fallback behavior when no URL is resolved.
             if allowed_m3u_profiles is not None and not direct_provider_url:
                 continue
+        elif expose_direct_source:
+            direct_provider_url = _channel_exposing_provider_url(channel.streams.all())
 
         channel_count += 1
         effective_group = channel.effective_channel_group_obj
@@ -382,17 +433,12 @@ def generate_m3u(request, profile_name=None, user=None):
         # Determine the stream URL based on request type
         if use_direct_urls:
             if direct_provider_url:
-                stream_url = direct_provider_url
-                # Restore VLC-style @ for multicast UDP
-                if stream_url.startswith("udp://") and "udp://@" not in stream_url:
-                    try:
-                        if ip_address(urlparse(stream_url).hostname).is_multicast:
-                            stream_url = stream_url.replace("udp://", "udp://@", 1)
-                    except ValueError:
-                        pass
+                stream_url = _restore_multicast_udp_at(direct_provider_url)
             else:
                 # Fall back to proxy URL if no direct URL available
                 stream_url = f"{_stream_url_prefix}{channel.uuid}"
+        elif direct_provider_url:
+            stream_url = _restore_multicast_udp_at(direct_provider_url)
         elif is_xc_request:
             stream_url = f"{_base_url}/live/{xc_username}/{xc_password}/{channel.id}{xc_qs_suffix}"
         else:
@@ -771,7 +817,27 @@ def _xc_live_streams_setup(request, user, category_id):
     _logo_url_prefix = _base_url + _logo_prefix_raw + "/"
     _logo_url_suffix = "/" + _logo_suffix_raw
 
-    return channels, channel_num_map, _get_default_group_id, _logo_url_prefix, _logo_url_suffix
+    from apps.m3u.direct_source import any_account_exposes_direct_source
+
+    expose_direct_source = any_account_exposes_direct_source()
+    if expose_direct_source:
+        channels = channels.prefetch_related(
+            Prefetch(
+                'streams',
+                queryset=Stream.objects.select_related('m3u_account').order_by(
+                    'channelstream__order'
+                ),
+            )
+        )
+
+    return (
+        channels,
+        channel_num_map,
+        _get_default_group_id,
+        _logo_url_prefix,
+        _logo_url_suffix,
+        expose_direct_source,
+    )
 
 
 def _xc_channel_entry(
@@ -782,6 +848,7 @@ def _xc_channel_entry(
     _logo_url_suffix,
     *,
     catchup_allowed=True,
+    expose_direct_source=False,
 ):
     channel_num_int = channel_num_map.get(channel.id)
     if channel_num_int is None:
@@ -816,26 +883,31 @@ def _xc_channel_entry(
         "category_ids": [group_id],
         "custom_sid": "",
         "tv_archive": tv_archive,
-        "direct_source": "",
+        "direct_source": (
+            _channel_exposing_provider_url(channel.streams.all()) or ""
+            if expose_direct_source
+            else ""
+        ),
         "tv_archive_duration": tv_archive_duration,
     }
 
 
 def xc_get_live_streams(request, user, category_id=None):
-    channels, channel_num_map, _get_default_group_id, _logo_url_prefix, _logo_url_suffix = \
+    channels, channel_num_map, _get_default_group_id, _logo_url_prefix, _logo_url_suffix, expose_direct_source = \
         _xc_live_streams_setup(request, user, category_id)
     catchup_allowed = is_catchup_enabled(user=user)
     return [
         _xc_channel_entry(
             ch, channel_num_map, _get_default_group_id, _logo_url_prefix, _logo_url_suffix,
             catchup_allowed=catchup_allowed,
+            expose_direct_source=expose_direct_source,
         )
         for ch in channels
     ]
 
 
 def _xc_stream_live_streams(request, user, category_id=None):
-    channels, channel_num_map, _get_default_group_id, _logo_url_prefix, _logo_url_suffix = \
+    channels, channel_num_map, _get_default_group_id, _logo_url_prefix, _logo_url_suffix, expose_direct_source = \
         _xc_live_streams_setup(request, user, category_id)
     catchup_allowed = is_catchup_enabled(user=user)
     yield "["
@@ -845,6 +917,7 @@ def _xc_stream_live_streams(request, user, category_id=None):
             _xc_channel_entry(
                 channel, channel_num_map, _get_default_group_id, _logo_url_prefix, _logo_url_suffix,
                 catchup_allowed=catchup_allowed,
+                expose_direct_source=expose_direct_source,
             )
         )
         sep = ","
@@ -1092,12 +1165,14 @@ def xc_get_epg(request, user, short=False):
 
 
 XC_MOVIE_VALUE_FIELDS = (
-    'id', 'movie_id', 'category_id', 'container_extension',
+    'id', 'movie_id', 'category_id', 'container_extension', 'stream_id',
+    'm3u_account_id',
     'movie__id', 'movie__name', 'movie__rating', 'movie__created_at',
     'movie__tmdb_id', 'movie__imdb_id', 'movie__description', 'movie__genre',
     'movie__year', 'movie__is_adult', 'movie__custom_properties', 'movie__logo_id',
     # Lean relation extracts (see _xc_annotate_relation_extracts).
     'rel_movie_image', 'rel_backdrop', 'provider_added',
+    'rel_direct_source', 'rel_url_video', 'rel_url',
 )
 
 XC_SERIES_VALUE_FIELDS = (
@@ -1164,6 +1239,21 @@ def _xc_annotate_relation_extracts(qs):
         ),
         provider_added=NullIf(
             Trim(KeyTextTransform('added', basic)),
+            Value(''),
+            output_field=TextField(),
+        ),
+        rel_direct_source=NullIf(
+            Trim(KeyTextTransform('direct_source', basic)),
+            Value(''),
+            output_field=TextField(),
+        ),
+        rel_url_video=NullIf(
+            Trim(KeyTextTransform('url_video', basic)),
+            Value(''),
+            output_field=TextField(),
+        ),
+        rel_url=NullIf(
+            Trim(KeyTextTransform('url', basic)),
             Value(''),
             output_field=TextField(),
         ),
@@ -1330,6 +1420,13 @@ def xc_get_vod_streams(request, user, category_id=None):
     # One reverse for the fallback-icon proxy rewrites below.
     _movie_image_parts = vod_image_url_parts(request, "movie")
 
+    from apps.m3u.direct_source import (
+        exposing_accounts_by_id,
+        resolve_vod_provider_url_from_parts,
+    )
+
+    exposing_accounts = exposing_accounts_by_id()
+
     streams = []
     append = streams.append
     for num, row in enumerate(relations, 1):
@@ -1339,6 +1436,20 @@ def xc_get_vod_streams(request, user, category_id=None):
         category_id_list = [category_id] if category_id else []
         rating = row['movie__rating']
         artwork = _xc_relation_artwork_from_row(row, custom_props)
+        account = exposing_accounts.get(row['m3u_account_id'])
+        direct_source = ""
+        if account is not None:
+            direct_source = resolve_vod_provider_url_from_parts(
+                account=account,
+                stored_payload={
+                    "direct_source": row.get("rel_direct_source") or "",
+                    "url_video": row.get("rel_url_video") or "",
+                    "url": row.get("rel_url") or "",
+                },
+                stream_id=row.get("stream_id"),
+                container_extension=row.get("container_extension"),
+                content_path="movie",
+            )
 
         append({
             "num": num,
@@ -1371,7 +1482,7 @@ def xc_get_vod_streams(request, user, category_id=None):
             "category_ids": category_id_list,
             "container_extension": row['container_extension'] or "mp4",
             "custom_sid": None,
-            "direct_source": "",
+            "direct_source": direct_source,
         })
 
     return streams
@@ -1539,7 +1650,13 @@ def xc_get_series_info(request, user, series_id):
         'container_extension',
         'created_at',
         'custom_properties',
+        'stream_id',
         'm3u_account__priority',
+        'm3u_account__custom_properties',
+        'm3u_account__account_type',
+        'm3u_account__server_url',
+        'm3u_account__username',
+        'm3u_account__password',
     ).order_by('episode_id', '-m3u_account__priority', 'id'):
         # First row per episode wins due to priority/id ordering.
         if rel.episode_id not in relations_by_episode_id:
@@ -1594,7 +1711,7 @@ def xc_get_series_info(request, user, series_id):
             "container_extension": container_extension,
             "added": added_timestamp,
             "custom_sid": None,
-            "direct_source": "",
+            "direct_source": _vod_relation_direct_source(best_relation, "series"),
             "info": {
                 "id": int(episode.id),
                 "name": episode.name,
@@ -1758,7 +1875,9 @@ def xc_get_vod_info(request, user, vod_id):
 
     try:
         # Order by account priority to get the best relation when multiple exist
-        movie_relation = M3UMovieRelation.objects.select_related('movie', 'movie__logo').filter(**filters).order_by('-m3u_account__priority', 'id').first()
+        movie_relation = M3UMovieRelation.objects.select_related(
+            'movie', 'movie__logo', 'm3u_account'
+        ).filter(**filters).order_by('-m3u_account__priority', 'id').first()
         if not movie_relation:
             raise Http404()
         movie = movie_relation.movie
@@ -1904,7 +2023,7 @@ def xc_get_vod_info(request, user, vod_id):
             "category_ids": [int(movie_relation.category.id)] if movie_relation.category else [],
             "container_extension": movie_relation.container_extension or "mp4",
             "custom_sid": None,
-            "direct_source": "",
+            "direct_source": _vod_relation_direct_source(movie_relation, "movie"),
         }
     }
 
