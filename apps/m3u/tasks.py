@@ -3733,6 +3733,44 @@ def _refresh_single_m3u_account_impl(account_id):
             del channel_group_relationships, filtered_groups
 
             if not all_xc_streams:
+                # A provider that exposes no live categories at all is a
+                # VOD-only account, not a failure: the empty live fetch is its
+                # permanent state. Treat it as a successful refresh and queue
+                # the VOD refresh, so the account does not sit in ERROR and
+                # live cleanup/auto-sync (which would have nothing to do) is
+                # skipped.
+                has_live_categories = any(
+                    isinstance(props, dict) and "xc_id" in props
+                    for props in (groups or {}).values()
+                )
+                if vod_enabled and not has_live_categories:
+                    logger.warning(
+                        f"XC provider for account {account_id} exposes no live "
+                        f"categories; treating refresh as VOD-only."
+                    )
+                    message = (
+                        "No live categories on this provider; VOD-only refresh "
+                        "completed."
+                    )
+                    account.status = M3UAccount.Status.SUCCESS
+                    account.last_message = message
+                    account.updated_at = timezone.now()
+                    account.save(
+                        update_fields=["status", "last_message", "updated_at"]
+                    )
+                    try:
+                        from apps.vod.tasks import refresh_vod_content
+
+                        refresh_vod_content.delay(account_id)
+                        logger.info(
+                            f"VOD refresh task queued for VOD-only account {account_id}"
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to queue VOD refresh for account "
+                            f"{account_id}: {str(e)}"
+                        )
+                    return message
                 # Empty XC fetch (provider hiccup, fetch error, or no enabled
                 # category matched) must not fall through to stale-marking and
                 # auto-sync, which would delete the entire auto-created lineup.
