@@ -22,6 +22,7 @@ import logging
 from django.db.models.functions import Lower
 import os
 from apps.m3u.utils import calculate_tuner_count
+from apps.m3u.direct_source import PROVIDER_VIDEO_URL_KEYS
 from apps.proxy.utils import get_user_active_connections
 import regex
 from core.models import CoreSettings
@@ -71,7 +72,7 @@ def _restore_multicast_udp_at(stream_url):
     return stream_url
 
 
-def _channel_exposing_provider_url(streams):
+def _channel_exposing_provider_url(streams, allowed_m3u_profiles=None):
     """Provider URL when the first stream's M3U account opted into expose_direct_source."""
     from apps.m3u.direct_source import (
         account_exposes_direct_source,
@@ -79,11 +80,18 @@ def _channel_exposing_provider_url(streams):
     )
 
     streams = list(streams)
+    if allowed_m3u_profiles is not None:
+        # The existing resolver applies the allowed profile's credentials.
+        streams = [stream for stream in streams if (
+            stream.m3u_account and stream.m3u_account.is_active
+            and account_exposes_direct_source(stream.m3u_account)
+        )]
+        return _direct_m3u_provider_url(streams, allowed_m3u_profiles)
     stream = streams[0] if streams else None
     if stream is None:
         return None
     account = stream.m3u_account
-    if not account_exposes_direct_source(account):
+    if not account or not account.is_active or not account_exposes_direct_source(account):
         return None
     url = resolve_live_provider_url(stream, account)
     return url or None
@@ -300,7 +308,7 @@ def generate_m3u(request, profile_name=None, user=None):
         or (user is not None and user.user_level >= 10)
     )
     allowed_m3u_profiles = None
-    if use_direct_urls and user is not None:
+    if user is not None:
         from apps.m3u.utils import get_allowed_m3u_profiles
 
         allowed_m3u_profiles = get_allowed_m3u_profiles(user)
@@ -380,7 +388,9 @@ def generate_m3u(request, profile_name=None, user=None):
             if allowed_m3u_profiles is not None and not direct_provider_url:
                 continue
         elif expose_direct_source:
-            direct_provider_url = _channel_exposing_provider_url(channel.streams.all())
+            direct_provider_url = _channel_exposing_provider_url(
+                channel.streams.all(), allowed_m3u_profiles
+            )
 
         channel_count += 1
         effective_group = channel.effective_channel_group_obj
@@ -849,6 +859,7 @@ def _xc_channel_entry(
     *,
     catchup_allowed=True,
     expose_direct_source=False,
+    allowed_m3u_profiles=None,
 ):
     channel_num_int = channel_num_map.get(channel.id)
     if channel_num_int is None:
@@ -884,7 +895,7 @@ def _xc_channel_entry(
         "custom_sid": "",
         "tv_archive": tv_archive,
         "direct_source": (
-            _channel_exposing_provider_url(channel.streams.all()) or ""
+            _channel_exposing_provider_url(channel.streams.all(), allowed_m3u_profiles) or ""
             if expose_direct_source
             else ""
         ),
@@ -896,11 +907,14 @@ def xc_get_live_streams(request, user, category_id=None):
     channels, channel_num_map, _get_default_group_id, _logo_url_prefix, _logo_url_suffix, expose_direct_source = \
         _xc_live_streams_setup(request, user, category_id)
     catchup_allowed = is_catchup_enabled(user=user)
+    from apps.m3u.utils import get_allowed_m3u_profiles
+    allowed_profiles = get_allowed_m3u_profiles(user)
     return [
         _xc_channel_entry(
             ch, channel_num_map, _get_default_group_id, _logo_url_prefix, _logo_url_suffix,
             catchup_allowed=catchup_allowed,
             expose_direct_source=expose_direct_source,
+            allowed_m3u_profiles=allowed_profiles,
         )
         for ch in channels
     ]
@@ -910,6 +924,8 @@ def _xc_stream_live_streams(request, user, category_id=None):
     channels, channel_num_map, _get_default_group_id, _logo_url_prefix, _logo_url_suffix, expose_direct_source = \
         _xc_live_streams_setup(request, user, category_id)
     catchup_allowed = is_catchup_enabled(user=user)
+    from apps.m3u.utils import get_allowed_m3u_profiles
+    allowed_profiles = get_allowed_m3u_profiles(user)
     yield "["
     sep = ""
     for channel in channels:
@@ -918,6 +934,7 @@ def _xc_stream_live_streams(request, user, category_id=None):
                 channel, channel_num_map, _get_default_group_id, _logo_url_prefix, _logo_url_suffix,
                 catchup_allowed=catchup_allowed,
                 expose_direct_source=expose_direct_source,
+                allowed_m3u_profiles=allowed_profiles,
             )
         )
         sep = ","
@@ -1172,7 +1189,7 @@ XC_MOVIE_VALUE_FIELDS = (
     'movie__year', 'movie__is_adult', 'movie__custom_properties', 'movie__logo_id',
     # Lean relation extracts (see _xc_annotate_relation_extracts).
     'rel_movie_image', 'rel_backdrop', 'provider_added',
-    'rel_direct_source', 'rel_url_video', 'rel_url',
+    *(f'rel_{key}' for key in PROVIDER_VIDEO_URL_KEYS),
 )
 
 XC_SERIES_VALUE_FIELDS = (
@@ -1242,21 +1259,9 @@ def _xc_annotate_relation_extracts(qs):
             Value(''),
             output_field=TextField(),
         ),
-        rel_direct_source=NullIf(
-            Trim(KeyTextTransform('direct_source', basic)),
-            Value(''),
-            output_field=TextField(),
-        ),
-        rel_url_video=NullIf(
-            Trim(KeyTextTransform('url_video', basic)),
-            Value(''),
-            output_field=TextField(),
-        ),
-        rel_url=NullIf(
-            Trim(KeyTextTransform('url', basic)),
-            Value(''),
-            output_field=TextField(),
-        ),
+        **{f'rel_{key}': NullIf(
+            Trim(KeyTextTransform(key, basic)), Value(''), output_field=TextField(),
+        ) for key in PROVIDER_VIDEO_URL_KEYS},
     )
 
 
@@ -1364,8 +1369,14 @@ def _xc_added_timestamp(provider_added, fallback_dt):
     using it lets clients that sort by "date added" reflect provider dates
     instead of the timestamp of the refresh that imported the row."""
     try:
-        return str(int(float(provider_added)))
-    except (TypeError, ValueError):
+        # Reject non-finite values, milliseconds and invalid calendar epochs.
+        if isinstance(provider_added, bool):
+            raise ValueError
+        value = int(str(provider_added).strip())
+        if not 0 < value <= 253402300799:
+            raise ValueError
+        return str(value)
+    except (TypeError, ValueError, OverflowError):
         return str(int(fallback_dt.timestamp()))
 
 
@@ -1442,9 +1453,8 @@ def xc_get_vod_streams(request, user, category_id=None):
             direct_source = resolve_vod_provider_url_from_parts(
                 account=account,
                 stored_payload={
-                    "direct_source": row.get("rel_direct_source") or "",
-                    "url_video": row.get("rel_url_video") or "",
-                    "url": row.get("rel_url") or "",
+                    key: row.get(f"rel_{key}") or ""
+                    for key in PROVIDER_VIDEO_URL_KEYS
                 },
                 stream_id=row.get("stream_id"),
                 container_extension=row.get("container_extension"),

@@ -925,7 +925,7 @@ def cleanup_stale_group_relationships(account, scan_start_time):
     return deleted_count
 
 
-def collect_xc_streams(account_id, enabled_groups):
+def collect_xc_streams(account_id, enabled_groups, *, raise_on_error=False):
     """Collect all XC streams in a single API call and filter by enabled groups."""
     account = M3UAccount.objects.select_related("user_agent").get(id=account_id)
     all_streams = []
@@ -1015,6 +1015,8 @@ def collect_xc_streams(account_id, enabled_groups):
 
     except Exception as e:
         logger.error(f"Failed to fetch XC streams: {str(e)}")
+        if raise_on_error:
+            raise
         return []
 
     logger.info(
@@ -3728,7 +3730,9 @@ def _refresh_single_m3u_account_impl(account_id):
 
             # Collect all XC streams in a single API call and filter by enabled categories
             logger.info("Fetching all XC streams from provider and filtering by enabled categories...")
-            all_xc_streams = collect_xc_streams(account_id, filtered_groups)
+            all_xc_streams = collect_xc_streams(
+                account_id, filtered_groups, raise_on_error=True
+            )
 
             del channel_group_relationships, filtered_groups
 
@@ -3752,12 +3756,6 @@ def _refresh_single_m3u_account_impl(account_id):
                         "No live categories on this provider; VOD-only refresh "
                         "completed."
                     )
-                    account.status = M3UAccount.Status.SUCCESS
-                    account.last_message = message
-                    account.updated_at = timezone.now()
-                    account.save(
-                        update_fields=["status", "last_message", "updated_at"]
-                    )
                     try:
                         from apps.vod.tasks import refresh_vod_content
 
@@ -3766,10 +3764,23 @@ def _refresh_single_m3u_account_impl(account_id):
                             f"VOD refresh task queued for VOD-only account {account_id}"
                         )
                     except Exception as e:
-                        logger.error(
-                            f"Failed to queue VOD refresh for account "
-                            f"{account_id}: {str(e)}"
+                        message = "Failed to queue VOD refresh"
+                        _set_m3u_account_status(
+                            account_id, M3UAccount.Status.ERROR, message,
+                            account_name=account.name, notify_error=True,
+                            ws_error=message,
                         )
+                        return message
+                    account.status = M3UAccount.Status.SUCCESS
+                    account.last_message = message
+                    account.updated_at = timezone.now()
+                    account.save(
+                        update_fields=["status", "last_message", "updated_at"]
+                    )
+                    send_m3u_update(
+                        account_id, "parsing", 100, status="success",
+                        streams_processed=0, message=message,
+                    )
                     return message
                 # Empty XC fetch (provider hiccup, fetch error, or no enabled
                 # category matched) must not fall through to stale-marking and
