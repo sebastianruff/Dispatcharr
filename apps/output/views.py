@@ -1127,7 +1127,7 @@ def _xc_annotate_relation_extracts(qs):
     ``provider_added`` exposes the provider-declared ``added`` epoch so the XC
     output can report the provider date instead of the local import time.
     """
-    from django.db.models import CharField, Value
+    from django.db.models import CharField, TextField, Value
     from django.db.models.fields.json import JSONField, KeyTextTransform, KeyTransform
     from django.db.models.functions import Coalesce, NullIf, Trim
 
@@ -1162,7 +1162,11 @@ def _xc_annotate_relation_extracts(qs):
             *backdrop_candidates(detailed),
             *backdrop_candidates(basic),
         ),
-        provider_added=NullIf(Trim(KeyTextTransform('added', basic)), Value('')),
+        provider_added=NullIf(
+            Trim(KeyTextTransform('added', basic)),
+            Value(''),
+            output_field=TextField(),
+        ),
     )
 
 
