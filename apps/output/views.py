@@ -1096,8 +1096,8 @@ XC_MOVIE_VALUE_FIELDS = (
     'movie__id', 'movie__name', 'movie__rating', 'movie__created_at',
     'movie__tmdb_id', 'movie__imdb_id', 'movie__description', 'movie__genre',
     'movie__year', 'movie__is_adult', 'movie__custom_properties', 'movie__logo_id',
-    # Lean relation-artwork extracts (see _xc_annotate_relation_artwork).
-    'rel_movie_image', 'rel_backdrop',
+    # Lean relation extracts (see _xc_annotate_relation_extracts).
+    'rel_movie_image', 'rel_backdrop', 'provider_added',
 )
 
 XC_SERIES_VALUE_FIELDS = (
@@ -1105,7 +1105,7 @@ XC_SERIES_VALUE_FIELDS = (
     'series__id', 'series__name', 'series__description', 'series__genre',
     'series__year', 'series__rating', 'series__custom_properties', 'series__logo_id',
     'series__tmdb_id', 'series__imdb_id',
-    # Lean relation-artwork extracts (see _xc_annotate_relation_artwork).
+    # Lean relation extracts (see _xc_annotate_relation_extracts).
     'rel_movie_image', 'rel_backdrop',
 )
 
@@ -1114,8 +1114,8 @@ XC_SERIES_VALUE_FIELDS = (
 XC_RELATION_IMAGE_KEYS = ('movie_image', 'cover_big', 'stream_icon', 'cover')
 
 
-def _xc_annotate_relation_artwork(qs):
-    """Annotate lean artwork fields from relation custom_properties JSON.
+def _xc_annotate_relation_extracts(qs):
+    """Annotate lean artwork and provider-date fields from relation JSON.
 
     Avoids selecting the full JSON blob (basic_data holds the raw provider list
     entry and detailed_info the advanced payload, which add up across 50k+ VOD
@@ -1123,6 +1123,9 @@ def _xc_annotate_relation_artwork(qs):
     relations: detailed_info, then basic_data. Blank / whitespace-only strings and
     empty backdrop arrays are treated as missing, matching the Python helper,
     since raw basic_data is stored uncleaned and often carries empty image keys.
+
+    ``provider_added`` exposes the provider-declared ``added`` epoch so the XC
+    output can report the provider date instead of the local import time.
     """
     from django.db.models import CharField, Value
     from django.db.models.fields.json import JSONField, KeyTextTransform, KeyTransform
@@ -1159,6 +1162,7 @@ def _xc_annotate_relation_artwork(qs):
             *backdrop_candidates(detailed),
             *backdrop_candidates(basic),
         ),
+        provider_added=NullIf(Trim(KeyTextTransform('added', basic)), Value('')),
     )
 
 
@@ -1226,7 +1230,7 @@ def _xc_fetch_priority_distinct_relations(
 
     def _fetch_by_ids(ids):
         return list(
-            _xc_annotate_relation_artwork(manager.filter(pk__in=ids))
+            _xc_annotate_relation_extracts(manager.filter(pk__in=ids))
             .values(*value_fields)
             .order_by(Lower(order_by_name_field))
         )
@@ -1249,7 +1253,7 @@ def _xc_fetch_priority_distinct_relations(
             return _fetch_by_ids(winning_ids)
 
     seen = {}
-    for row in _xc_annotate_relation_artwork(narrow_qs).values(*value_fields).order_by(
+    for row in _xc_annotate_relation_extracts(narrow_qs).values(*value_fields).order_by(
         '-m3u_account__priority', 'id'
     ):
         key = row[distinct_field]
@@ -1258,6 +1262,17 @@ def _xc_fetch_priority_distinct_relations(
     rows = list(seen.values())
     rows.sort(key=lambda r: (r[order_by_name_field] or '').lower())
     return rows
+
+
+def _xc_added_timestamp(provider_added, fallback_dt):
+    """XC ``added`` epoch seconds: the provider value when valid, else the
+    local import time. Providers declare ``added`` in the VOD list payload;
+    using it lets clients that sort by "date added" reflect provider dates
+    instead of the timestamp of the refresh that imported the row."""
+    try:
+        return str(int(float(provider_added)))
+    except (TypeError, ValueError):
+        return str(int(fallback_dt.timestamp()))
 
 
 def xc_get_vod_categories(user):
@@ -1337,7 +1352,7 @@ def xc_get_vod_streams(request, user, category_id=None):
             ),
             "rating": rating or "0",
             "rating_5based": round(float(rating or 0) / 2, 2) if rating else 0,
-            "added": str(int(row['movie__created_at'].timestamp())),
+            "added": _xc_added_timestamp(row.get('provider_added'), row['movie__created_at']),
             "is_adult": int(bool(row['movie__is_adult'])),
             "tmdb_id": row['movie__tmdb_id'] or "",
             "imdb_id": row['movie__imdb_id'] or "",
@@ -1877,7 +1892,10 @@ def xc_get_vod_info(request, user, vod_id):
         "movie_data": {
             "stream_id": movie.id,
             "name": movie.name,
-            "added": str(int(movie_relation.created_at.timestamp())),
+            "added": _xc_added_timestamp(
+                ((movie_relation.custom_properties or {}).get('basic_data') or {}).get('added'),
+                movie_relation.created_at,
+            ),
             "category_id": str(movie_relation.category.id) if movie_relation.category else "0",
             "category_ids": [int(movie_relation.category.id)] if movie_relation.category else [],
             "container_extension": movie_relation.container_extension or "mp4",
