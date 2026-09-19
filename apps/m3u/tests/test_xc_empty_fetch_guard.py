@@ -88,6 +88,33 @@ class XCEmptyFetchGuardTests(TransactionTestCase):
         self.assertEqual(account.status, M3UAccount.Status.ERROR)
         self.assertIn("no streams returned from provider", result)
 
+    @patch("apps.m3u.tasks.sync_auto_channels")
+    @patch("apps.vod.tasks.refresh_vod_content")
+    @patch("apps.m3u.tasks.collect_xc_streams", return_value=[])
+    @patch("apps.m3u.tasks.refresh_m3u_groups")
+    def test_vod_only_provider_succeeds_without_sync(
+        self, mock_refresh_groups, _mock_collect, mock_refresh_vod, mock_sync
+    ):
+        # A provider without any live category is VOD-only by design: the
+        # refresh succeeds, skips live cleanup/auto-sync and queues the VOD
+        # refresh instead of surfacing ERROR.
+        account, _group, stream, channel = self._setup_xc_account_with_auto_channel()
+        account.custom_properties = {"enable_vod": True}
+        account.save(update_fields=["custom_properties"])
+        # Only the local default group: no provider category carries an xc_id.
+        mock_refresh_groups.return_value = ([], {"Default Group": {}})
+
+        result = _refresh_single_m3u_account_impl(account.id)
+
+        mock_sync.assert_not_called()
+        mock_refresh_vod.delay.assert_called_once_with(account.id)
+        self.assertTrue(Channel.objects.filter(pk=channel.pk).exists())
+        stream.refresh_from_db()
+        self.assertFalse(stream.is_stale)
+        account.refresh_from_db()
+        self.assertEqual(account.status, M3UAccount.Status.SUCCESS)
+        self.assertIn("VOD-only", result)
+
     @patch("apps.m3u.tasks.log_system_event")
     @patch("apps.m3u.tasks.send_m3u_update")
     @patch("apps.m3u.tasks.cleanup_stale_group_relationships")
