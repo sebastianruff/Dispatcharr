@@ -46,8 +46,14 @@ Track live, VOD, and catch-up sessions, client connections, and bandwidth usage 
 👥 **Share Access Safely**\
 Create multiple user accounts with granular permissions. Share streams via M3U playlists or Xtream Codes API while controlling which users access which channels, profiles, or features. Network-based access restrictions available for additional security.
 
+🔗 **Direct Provider Stream URLs (Opt-In)**\
+Expose raw provider stream URLs directly to clients instead of Dispatcharr proxy URLs for specific M3U accounts. In the M3U account's `custom_properties`, set `"expose_direct_source": true`:
+- **XC output**: Populates `direct_source` with the provider stream URL for live streams, movies, and episodes (remains `""` when not opted in or unresolvable).
+- **M3U output**: Emits the provider stream URL for channels belonging to that account instead of Dispatcharr proxy URLs.
+- ⚠️ **Security Tradeoff**: Provider URLs often embed provider credentials (username/password). Enabling this option exposes those URLs to any client with access to your output playlists or XC API.
+
 🔌 **Extend with Plugins**\
-Build custom integrations using Dispatcharr's robust plugin system. Automate tasks, connect to external services, or add entirely new workflows.
+Create custom integrations using Dispatcharr's robust plugin system. Automate tasks, connect to external services, or add entirely new workflows.
 
 ---
 
