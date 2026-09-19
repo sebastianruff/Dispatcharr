@@ -109,7 +109,7 @@ jobs:
           else
             echo "sync_python_deps=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "Using base image: ghcr.io/${REPO_OWNER}/${REPO_NAME}:${TAG}"
+          echo "Using base image: ghcr.io/dispatcharr/dispatcharr:${TAG}"
 
       - name: Resolve Django test labels
         id: resolve
