@@ -24,6 +24,20 @@ class AccountExposesDirectSourceTests(SimpleTestCase):
 
 
 class StoredProviderUrlTests(SimpleTestCase):
+    def test_metadata_urls_are_not_playback_sources(self):
+        self.assertEqual(stored_provider_url({
+            "url_website": "https://example.test/program",
+            "url_subtitle": "https://example.test/subtitles.xml",
+        }), "")
+
+    def test_malformed_url_falls_through_to_valid_video(self):
+        for invalid in ("http://[broken", "https://example.test/a\n#EXTINF:-1,b"):
+            with self.subTest(invalid=invalid):
+                self.assertEqual(stored_provider_url({
+                    "direct_source": invalid,
+                    "url_video_hd": "https://example.test/video.mp4",
+                }), "https://example.test/video.mp4")
+
     def test_prefers_direct_source_then_url_video_then_url(self):
         self.assertEqual(
             stored_provider_url(

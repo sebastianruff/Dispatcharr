@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from apps.accounts.models import User
 from apps.channels.models import Channel, ChannelGroup, Stream
-from apps.m3u.models import M3UAccount
+from apps.m3u.models import M3UAccount, M3UAccountProfile
 from apps.output.views import (
     generate_m3u,
     xc_get_live_streams,
@@ -149,6 +149,56 @@ class ExposeDirectSourceXcTests(TestCase):
 
         live = xc_get_live_streams(self.request, self.user)[0]
         self.assertEqual(live["direct_source"], "")
+
+    def test_live_opt_in_does_not_bypass_empty_profile_allowlist(self):
+        account = self._account("Restricted provider", expose=True)
+        channel = Channel.objects.create(name="Restricted", channel_number=9)
+        stream = Stream.objects.create(
+            name="Restricted", m3u_account=account,
+            url="https://example.test/private.ts",
+        )
+        channel.streams.add(stream)
+        self.user.custom_properties["allowed_m3u_profile_ids"] = []
+        self.user.save()
+        self.assertEqual(xc_get_live_streams(self.request, self.user)[0]["direct_source"], "")
+        request = self.factory.get("/get.php", {"username": "viewer", "password": "test"})
+        with patch("apps.output.views.log_system_event"):
+            playlist = generate_m3u(request, user=self.user).content.decode()
+        self.assertNotIn(stream.url, playlist)
+
+    def test_vod_list_and_details_preserve_quality_variant_url(self):
+        account = self._account("Quality variants", expose=True)
+        movie = Movie.objects.create(name="HD movie")
+        url = "https://cdn.example/video-hd.mp4"
+        M3UMovieRelation.objects.create(
+            m3u_account=account, movie=movie, stream_id="quality",
+            last_advanced_refresh=timezone.now(), custom_properties={
+                "basic_data": {"url_video_hd": url}, "detailed_fetched": True,
+            },
+        )
+        self.assertEqual(xc_get_vod_streams(self.request, self.user)[0]["direct_source"], url)
+        self.assertEqual(xc_get_vod_info(self.request, self.user, movie.id)["movie_data"]["direct_source"], url)
+
+    def test_live_uses_allowed_profile_credentials(self):
+        account = self._account("Profile credentials", expose=True)
+        profile = M3UAccountProfile.objects.create(
+            name="Allowed", m3u_account=account, is_active=True,
+            search_pattern="/alice/secret/", replace_pattern="/viewer/allowed/",
+        )
+        self.user.custom_properties["allowed_m3u_profile_ids"] = [profile.id]
+        self.user.save()
+        channel = Channel.objects.create(name="Profile channel", channel_number=10)
+        stream = Stream.objects.create(
+            name="Profile stream", m3u_account=account, stream_id=12,
+            url="https://xc.example.com/live/alice/secret/12.ts",
+        )
+        channel.streams.add(stream)
+        with self.assertLogs("apps.m3u.credentials", level="DEBUG") as logs:
+            result = xc_get_live_streams(self.request, self.user)[0]["direct_source"]
+        self.assertEqual(result, "https://xc.example.com/live/viewer/allowed/12.ts")
+        for entry in logs.output:
+            self.assertNotIn("/alice/secret/", entry)
+            self.assertNotIn("/viewer/allowed/", entry)
 
     def test_episode_direct_source_when_opted_in(self):
         account = self._account(f"series-{uuid4().hex[:6]}", expose=True)

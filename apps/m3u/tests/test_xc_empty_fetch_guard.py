@@ -23,10 +23,35 @@ from apps.channels.models import (
     Stream,
 )
 from apps.m3u.models import M3UAccount
-from apps.m3u.tasks import _refresh_single_m3u_account_impl
+from apps.m3u.tasks import _refresh_single_m3u_account_impl, collect_xc_streams
 
 
 class XCEmptyFetchGuardTests(TransactionTestCase):
+    @patch("apps.m3u.tasks.XCClient")
+    def test_fetch_failure_is_not_a_successful_empty_catalog(self, client):
+        account, _, _, _ = self._setup_xc_account_with_auto_channel()
+        client.return_value.__enter__.return_value.get_all_live_streams.side_effect = RuntimeError("offline")
+        with self.assertRaises(RuntimeError):
+            collect_xc_streams(account.id, {}, raise_on_error=True)
+
+    @patch("apps.m3u.tasks.send_m3u_update")
+    @patch("apps.vod.tasks.refresh_vod_content")
+    @patch("apps.m3u.tasks.collect_xc_streams", return_value=[])
+    @patch("apps.m3u.tasks.refresh_m3u_groups")
+    def test_vod_queue_failure_is_reported(self, groups, collect, vod, updates):
+        account, _, stream, channel = self._setup_xc_account_with_auto_channel()
+        account.custom_properties = {"enable_vod": True}
+        account.save(update_fields=["custom_properties"])
+        groups.return_value = ([], {"Default Group": {}})
+        vod.delay.side_effect = RuntimeError("queue unavailable")
+        _refresh_single_m3u_account_impl(account.id)
+        account.refresh_from_db()
+        self.assertEqual(account.status, M3UAccount.Status.ERROR)
+        self.assertEqual(account.last_message, "Failed to queue VOD refresh")
+        stream.refresh_from_db()
+        self.assertFalse(stream.is_stale)
+        self.assertTrue(Channel.objects.filter(pk=channel.pk).exists())
+
     def _setup_xc_account_with_auto_channel(self):
         account = M3UAccount.objects.create(
             name="Test XC Provider",

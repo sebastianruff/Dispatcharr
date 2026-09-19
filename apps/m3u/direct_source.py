@@ -8,9 +8,11 @@ from core.utils import custom_properties_as_dict
 
 EXPOSE_DIRECT_SOURCE_KEY = "expose_direct_source"
 
-_STORED_URL_KEYS = (
+PROVIDER_VIDEO_URL_KEYS = (
     "direct_source",
     "url_video",
+    "url_video_hd",
+    "url_video_low",
     "url",
     "url_hd",
     "url_sd",
@@ -50,7 +52,7 @@ def any_account_exposes_direct_source() -> bool:
     from apps.m3u.models import M3UAccount
 
     return M3UAccount.objects.filter(
-        custom_properties__expose_direct_source=True
+        custom_properties__expose_direct_source=True, is_active=True
     ).exists()
 
 
@@ -60,7 +62,7 @@ def exposing_accounts_by_id():
     return {
         account.id: account
         for account in M3UAccount.objects.filter(
-            custom_properties__expose_direct_source=True
+            custom_properties__expose_direct_source=True, is_active=True
         )
     }
 
@@ -71,7 +73,12 @@ def is_complete_provider_url(value) -> bool:
     value = value.strip()
     if not value:
         return False
-    parsed = urlparse(value)
+    if any(char in value for char in "\r\n\x00"):
+        return False
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return False
     return parsed.scheme.lower() in _ABSOLUTE_SCHEMES and bool(parsed.netloc)
 
 
@@ -89,18 +96,10 @@ def stored_provider_url(payload) -> str:
 
 
 def _url_from_mapping(mapping: dict) -> str:
-    for key in _STORED_URL_KEYS:
+    for key in PROVIDER_VIDEO_URL_KEYS:
         candidate = mapping.get(key)
         if is_complete_provider_url(candidate):
             return candidate.strip()
-    for key, candidate in mapping.items():
-        if not isinstance(key, str):
-            continue
-        if key in _STORED_URL_KEYS:
-            continue
-        if key.startswith("url_") or key.startswith("direct_source_"):
-            if is_complete_provider_url(candidate):
-                return candidate.strip()
     return ""
 
 

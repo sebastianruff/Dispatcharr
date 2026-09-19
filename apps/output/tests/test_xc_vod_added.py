@@ -8,13 +8,23 @@ import time.
 """
 from uuid import uuid4
 
-from django.test import RequestFactory, TestCase
+from django.test import RequestFactory, TestCase, SimpleTestCase
 from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.m3u.models import M3UAccount
-from apps.output.views import xc_get_vod_info, xc_get_vod_streams
+from apps.output.views import xc_get_vod_info, xc_get_vod_streams, _xc_added_timestamp
 from apps.vod.models import Movie, M3UMovieRelation
+
+
+class XcAddedValidationTests(SimpleTestCase):
+    def test_invalid_epochs_fall_back_without_breaking_catalog(self):
+        fallback = timezone.now()
+        for value in (None, "", "Infinity", "NaN", "1e999", "0", -1,
+                      True, "1600000000000", "1.5", {}, []):
+            with self.subTest(value=value):
+                self.assertEqual(_xc_added_timestamp(value, fallback),
+                                 str(int(fallback.timestamp())))
 
 
 class XcVodAddedTimestampTests(TestCase):
@@ -53,14 +63,14 @@ class XcVodAddedTimestampTests(TestCase):
 
         stream = xc_get_vod_streams(self.request, self.user)[0]
 
-        self.assertEqual(stream["added"], str(int(relation.created_at.timestamp())))
+        self.assertEqual(stream["added"], str(int(relation.movie.created_at.timestamp())))
 
     def test_vod_streams_falls_back_on_invalid_added(self):
         relation = self._relation(custom_properties={"basic_data": {"added": "n/a"}})
 
         stream = xc_get_vod_streams(self.request, self.user)[0]
 
-        self.assertEqual(stream["added"], str(int(relation.created_at.timestamp())))
+        self.assertEqual(stream["added"], str(int(relation.movie.created_at.timestamp())))
 
     def test_vod_info_uses_provider_added(self):
         # detailed_fetched + a fresh advanced refresh keep the info endpoint

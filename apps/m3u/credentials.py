@@ -83,7 +83,7 @@ def get_transformed_credentials(account, profile=None) -> TransformedCredentials
     clean_server_url = base_url.rstrip("/")
     # Synthetic XC live URL used only to apply search/replace and extract login.
     complete_url = f"{clean_server_url}/live/{base_username}/{base_password}/1234.ts"
-    logger.debug("Built complete URL for credential transform: %s", complete_url)
+    logger.debug("Prepared credential transform for account %s", account.pk)
 
     has_patterns = bool(
         profile and profile.search_pattern and profile.replace_pattern
@@ -109,34 +109,28 @@ def get_transformed_credentials(account, profile=None) -> TransformedCredentials
         return None, None, None
     except Exception as exc:
         logger.error(
-            "Error transforming credentials for profile '%s': %s",
+            "Error transforming credentials for profile '%s' (%s)",
             profile_label,
-            exc,
+            type(exc).__name__,
         )
         return None, None, None
 
     if match_count == 0:
         logger.warning(
-            "Profile '%s' search_pattern did not match (pattern=%r)",
+            "Profile '%s' search_pattern did not match",
             profile_label,
-            profile.search_pattern,
         )
         return None, None, None
 
-    logger.info(
-        "Transformed complete URL: %s -> %s",
-        complete_url,
-        transformed_complete_url,
-    )
+    logger.debug("Applied credential transform for profile '%s'", profile_label)
 
     parsed_url = urllib.parse.urlparse(transformed_complete_url)
     path_parts = [part for part in parsed_url.path.split("/") if part]
 
     if len(path_parts) < 4 or path_parts[-1] != "1234.ts":
         logger.warning(
-            "Could not extract credentials from transformed URL for profile '%s': %s",
+            "Could not extract credentials from transformed URL for profile '%s'",
             profile_label,
-            transformed_complete_url,
         )
         return None, None, None
 
@@ -148,10 +142,8 @@ def get_transformed_credentials(account, profile=None) -> TransformedCredentials
     transformed_url = f"{parsed_url.scheme}://{parsed_url.netloc}{base_path}"
 
     logger.debug(
-        "Extracted transformed credentials for profile '%s': server=%s user=%s",
+        "Resolved transformed credentials for profile '%s'",
         profile_label,
-        transformed_url,
-        transformed_username,
     )
     return transformed_url, transformed_username, transformed_password
 
