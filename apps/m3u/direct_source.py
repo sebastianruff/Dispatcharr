@@ -41,30 +41,79 @@ def account_exposes_direct_source(account_or_props) -> bool:
         return False
     if isinstance(account_or_props, dict):
         props = custom_properties_as_dict(account_or_props)
-    else:
-        props = custom_properties_as_dict(
-            getattr(account_or_props, "custom_properties", None)
-        )
+        return props.get(EXPOSE_DIRECT_SOURCE_KEY) is True
+    if props_have_direct_opt_in(
+        getattr(account_or_props, "custom_properties", None)
+    ):
+        return True
+    return _profile_opted_in(getattr(account_or_props, "stream_profile", None))
+
+
+def props_have_direct_opt_in(custom_properties) -> bool:
+    props = custom_properties_as_dict(custom_properties)
     return props.get(EXPOSE_DIRECT_SOURCE_KEY) is True
+
+
+def _profile_opted_in(profile) -> bool:
+    if profile is None:
+        return False
+    getter = getattr(profile, "is_direct", None)
+    if callable(getter):
+        try:
+            return bool(getter())
+        except Exception:
+            return False
+    name = getattr(profile, "name", None)
+    from core.models import DIRECT_PROFILE_NAME
+
+    return bool(getattr(profile, "locked", False)) and name == DIRECT_PROFILE_NAME
 
 
 def any_account_exposes_direct_source() -> bool:
     from apps.m3u.models import M3UAccount
 
-    return M3UAccount.objects.filter(
+    if M3UAccount.objects.filter(
         custom_properties__expose_direct_source=True, is_active=True
-    ).exists()
+    ).exists():
+        return True
+    return _any_direct_profile_assignment()
+
+
+def _any_direct_profile_assignment():
+    from apps.channels.models import StreamProfile
+    from apps.m3u.models import M3UAccount
+
+    profile_ids = (
+        M3UAccount.objects.filter(
+            stream_profile__isnull=False, is_active=True
+        )
+        .values_list("stream_profile_id", flat=True)
+        .distinct()
+    )
+    profiles = StreamProfile.objects.filter(pk__in=list(profile_ids))
+    for profile in profiles:
+        if _profile_opted_in(profile):
+            return True
+    return False
 
 
 def exposing_accounts_by_id():
     from apps.m3u.models import M3UAccount
 
-    return {
+    by_property = {
         account.id: account
         for account in M3UAccount.objects.filter(
             custom_properties__expose_direct_source=True, is_active=True
         )
     }
+    for account in M3UAccount.objects.filter(
+        stream_profile__isnull=False, is_active=True
+    ).select_related("stream_profile"):
+        if account.id in by_property:
+            continue
+        if _profile_opted_in(account.stream_profile):
+            by_property[account.id] = account
+    return by_property
 
 
 def is_complete_provider_url(value) -> bool:

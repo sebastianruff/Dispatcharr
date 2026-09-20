@@ -22,6 +22,34 @@ class AccountExposesDirectSourceTests(SimpleTestCase):
     def test_true_opt_in(self):
         self.assertTrue(account_exposes_direct_source({"expose_direct_source": True}))
 
+    def test_direct_stream_profile_object_opts_in(self):
+        class FakeProfile:
+            locked = True
+            name = "Direct"
+
+            def is_direct(self):
+                return True
+
+        class FakeAccount:
+            stream_profile = FakeProfile()
+            custom_properties = {}
+
+        self.assertTrue(account_exposes_direct_source(FakeAccount()))
+
+    def test_non_direct_stream_profile_does_not_opt_in(self):
+        class FakeProfile:
+            locked = True
+            name = "ffmpeg"
+
+            def is_direct(self):
+                return False
+
+        class FakeAccount:
+            stream_profile = FakeProfile()
+            custom_properties = {}
+
+        self.assertFalse(account_exposes_direct_source(FakeAccount()))
+
 
 class StoredProviderUrlTests(SimpleTestCase):
     def test_metadata_urls_are_not_playback_sources(self):

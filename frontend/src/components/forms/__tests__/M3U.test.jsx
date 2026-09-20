@@ -7,6 +7,7 @@ vi.mock('../../../store/userAgents', () => ({ default: vi.fn() }));
 vi.mock('../../../store/channels', () => ({ default: vi.fn() }));
 vi.mock('../../../store/epgs', () => ({ default: vi.fn() }));
 vi.mock('../../../store/useVODStore', () => ({ default: vi.fn() }));
+vi.mock('../../../store/streamProfiles', () => ({ default: vi.fn() }));
 
 // ── Utility mocks ──────────────────────────────────────────────────────────────
 vi.mock('../../../utils/forms/M3uUtils.js', () => ({
@@ -30,6 +31,7 @@ vi.mock('../../../utils/forms/M3uUtils.js', () => ({
 }));
 
 vi.mock('../../../store/playlists', () => ({ default: vi.fn() }));
+vi.mock('../../../store/serverGroups', () => ({ default: vi.fn() }));
 
 vi.mock('../../../utils/forms/DummyEpgUtils.js', () => ({
   addEPG: vi.fn(),
@@ -324,6 +326,7 @@ import useChannelsStore from '../../../store/channels';
 import useEPGsStore from '../../../store/epgs';
 import useVODStore from '../../../store/useVODStore';
 import usePlaylistsStore from '../../../store/playlists';
+import useStreamProfilesStore from '../../../store/streamProfiles';
 import * as M3uUtils from '../../../utils/forms/M3uUtils.js';
 import * as DummyEpgUtils from '../../../utils/forms/DummyEpgUtils.js';
 import * as mantineForm from '@mantine/form';
@@ -363,6 +366,7 @@ const setupStores = (overrides = {}) => {
   const fetchChannelGroups = vi.fn();
   const fetchEPGs = vi.fn();
   const fetchCategories = vi.fn();
+  const fetchStreamProfiles = vi.fn();
 
   useUserAgentsStore.mockImplementation((selector) => {
     const state = {
@@ -393,6 +397,14 @@ const setupStores = (overrides = {}) => {
     return selector(state);
   });
 
+  useStreamProfilesStore.mockImplementation((selector) => {
+    const state = {
+      profiles: overrides.streamProfiles || [],
+      fetchProfiles: fetchStreamProfiles,
+    };
+    return selector(state);
+  });
+
   usePlaylistsStore.mockImplementation((selector) => {
     const playlists = overrides.playlists || [];
     return selector({ playlists });
@@ -403,6 +415,7 @@ const setupStores = (overrides = {}) => {
     fetchChannelGroups,
     fetchEPGs,
     fetchCategories,
+    fetchStreamProfiles,
   };
 };
 
