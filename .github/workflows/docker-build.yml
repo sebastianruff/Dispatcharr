@@ -54,3 +54,17 @@ jobs:
           tags: |
             ghcr.io/${{ env.REPO_NAME }}:${{ env.TAG }}
             ghcr.io/${{ env.REPO_NAME }}:${{ github.sha }}
+
+      - name: Notify Komodo to deploy dispatcharr
+        if: github.ref == 'refs/heads/main'
+        env:
+          KOMODO_WEBHOOK_SECRET: ${{ secrets.KOMODO_WEBHOOK_SECRET }}
+        run: |
+          set -euo pipefail
+          body='{"ref":"refs/heads/main"}'
+          signature="sha256=$(printf '%s' "$body" | openssl dgst -sha256 -hmac "$KOMODO_WEBHOOK_SECRET" | awk '{print $2}')"
+          curl -fsS -m 30 \
+            -X POST "https://komodo.ruffs.cloud/listener/github/stack/dispatcharr/deploy" \
+            -H "Content-Type: application/json" \
+            -H "X-Hub-Signature-256: $signature" \
+            -d "$body"
