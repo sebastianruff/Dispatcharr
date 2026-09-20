@@ -3,7 +3,7 @@ from rest_framework import serializers, status
 from rest_framework.response import Response
 from .models import M3UAccount, M3UFilter, ServerGroup, M3UAccountProfile
 from core.models import UserAgent
-from apps.channels.models import ChannelGroup, ChannelGroupM3UAccount
+from apps.channels.models import ChannelGroup, ChannelGroupM3UAccount, StreamProfile
 from apps.channels.serializers import (
     ChannelGroupM3UAccountSerializer,
 )
