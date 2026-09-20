@@ -79,5 +79,15 @@ export const prepareSubmitValues = (values, expDate) => {
     prepared.server_group = null;
   }
 
+  if (
+    prepared.stream_profile === '' ||
+    prepared.stream_profile === '0' ||
+    prepared.stream_profile === undefined
+  ) {
+    prepared.stream_profile = null;
+  } else if (prepared.stream_profile !== null) {
+    prepared.stream_profile = Number(prepared.stream_profile);
+  }
+
   return prepared;
 };

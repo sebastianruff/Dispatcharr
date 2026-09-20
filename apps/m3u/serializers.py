@@ -144,6 +144,11 @@ class M3UAccountSerializer(serializers.ModelSerializer):
         allow_null=True,
         validators=[validate_flexible_url],
     )
+    stream_profile = serializers.PrimaryKeyRelatedField(
+        queryset=StreamProfile.objects.all(),
+        required=False,
+        allow_null=True,
+    )
     enable_vod = serializers.BooleanField(required=False, write_only=True)
     auto_enable_new_groups_live = serializers.BooleanField(required=False, write_only=True)
     auto_enable_new_groups_vod = serializers.BooleanField(required=False, write_only=True)
@@ -184,6 +189,7 @@ class M3UAccountSerializer(serializers.ModelSerializer):
             "earliest_expiration",
             "all_expirations",
             "exp_date",
+            "stream_profile",
         ]
         extra_kwargs = {
             "password": {

@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 import useUserAgentsStore from '../../store/userAgents';
 import useServerGroupsStore from '../../store/serverGroups';
 import usePlaylistsStore from '../../store/playlists';
+import useStreamProfilesStore from '../../store/streamProfiles';
 import M3UProfiles from './M3UProfiles';
 import {
   Box,
@@ -48,6 +49,8 @@ const M3U = ({
 }) => {
   const userAgents = useUserAgentsStore((s) => s.userAgents);
   const serverGroups = useServerGroupsStore((s) => s.serverGroups);
+  const streamProfiles = useStreamProfilesStore((s) => s.profiles);
+  const fetchStreamProfiles = useStreamProfilesStore((s) => s.fetchProfiles);
   const fetchChannelGroups = useChannelsStore((s) => s.fetchChannelGroups);
   const fetchEPGs = useEPGsStore((s) => s.fetchEPGs);
   const fetchCategories = useVODStore((s) => s.fetchCategories);
@@ -62,6 +65,12 @@ const M3U = ({
   const [serverGroupsManagerOpen, setServerGroupsManagerOpen] = useState(false);
   const [serverGroupsCreateOnOpen, setServerGroupsCreateOnOpen] =
     useState(false);
+
+  useEffect(() => {
+    if (isOpen && (!streamProfiles || streamProfiles.length === 0)) {
+      fetchStreamProfiles();
+    }
+  }, [isOpen, streamProfiles, fetchStreamProfiles]);
 
   // Keep expiration in sync when the default profile is edited (store refreshes).
   // Do not rebind the whole form to the live playlist or unsaved edits are wiped.
@@ -91,6 +100,7 @@ const M3U = ({
       stale_stream_days: 7,
       priority: 0,
       enable_vod: false,
+      stream_profile: null,
     },
 
     validate: {
@@ -126,6 +136,11 @@ const M3U = ({
             ? m3uAccount.priority
             : 0,
         enable_vod: m3uAccount.enable_vod || false,
+        stream_profile:
+          m3uAccount.stream_profile !== undefined &&
+          m3uAccount.stream_profile !== null
+            ? `${m3uAccount.stream_profile}`
+            : null,
       });
       setExpDate(expDateFromPlaylist(m3uAccount.exp_date));
 
@@ -393,6 +408,19 @@ const M3U = ({
                     value: `${ua.id}`,
                   }))
                 )}
+              />
+              <Select
+                id="stream_profile"
+                name="stream_profile"
+                label="Stream Profile"
+                description='Override the default stream profile for this account. Pick "Direct" to expose provider URLs in M3U output and Xtream Codes direct_source.'
+                clearable
+                {...form.getInputProps('stream_profile')}
+                key={form.key('stream_profile')}
+                data={(streamProfiles || []).map((profile) => ({
+                  value: `${profile.id}`,
+                  label: profile.name,
+                }))}
               />
             </Stack>
 

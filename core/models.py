@@ -47,6 +47,7 @@ class UserAgent(models.Model):
 
 PROXY_PROFILE_NAME = "Proxy"
 REDIRECT_PROFILE_NAME = "Redirect"
+DIRECT_PROFILE_NAME = "Direct"
 
 
 class StreamProfile(models.Model):
@@ -133,6 +134,11 @@ class StreamProfile(models.Model):
 
     def is_redirect(self):
         if self.locked and self.name == REDIRECT_PROFILE_NAME:
+            return True
+        return False
+
+    def is_direct(self):
+        if self.locked and self.name == DIRECT_PROFILE_NAME:
             return True
         return False
 

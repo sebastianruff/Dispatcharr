@@ -271,5 +271,37 @@ describe('M3uUtils', () => {
         expect(values).toEqual(original);
       });
     });
+
+    describe('stream_profile handling', () => {
+      it('sets stream_profile to null when value is empty string', () => {
+        const values = { account_type: 'M3U', stream_profile: '' };
+        const result = prepareSubmitValues(values, null);
+        expect(result.stream_profile).toBeNull();
+      });
+
+      it('sets stream_profile to null when value is "0"', () => {
+        const values = { account_type: 'M3U', stream_profile: '0' };
+        const result = prepareSubmitValues(values, null);
+        expect(result.stream_profile).toBeNull();
+      });
+
+      it('sets stream_profile to null when value is undefined', () => {
+        const values = { account_type: 'M3U' };
+        const result = prepareSubmitValues(values, null);
+        expect(result.stream_profile).toBeNull();
+      });
+
+      it('coerces string id to number when a profile is selected', () => {
+        const values = { account_type: 'M3U', stream_profile: '42' };
+        const result = prepareSubmitValues(values, null);
+        expect(result.stream_profile).toBe(42);
+      });
+
+      it('keeps stream_profile when it is already a number', () => {
+        const values = { account_type: 'M3U', stream_profile: 7 };
+        const result = prepareSubmitValues(values, null);
+        expect(result.stream_profile).toBe(7);
+      });
+    });
   });
 });
