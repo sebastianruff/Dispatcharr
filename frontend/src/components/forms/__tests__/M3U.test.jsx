@@ -4,6 +4,7 @@ import M3U from '../M3U';
 
 // ── Store mocks ────────────────────────────────────────────────────────────────
 vi.mock('../../../store/userAgents', () => ({ default: vi.fn() }));
+vi.mock('../../../store/serverGroups', () => ({ default: vi.fn() }));
 vi.mock('../../../store/channels', () => ({ default: vi.fn() }));
 vi.mock('../../../store/epgs', () => ({ default: vi.fn() }));
 vi.mock('../../../store/useVODStore', () => ({ default: vi.fn() }));
@@ -326,6 +327,7 @@ import useChannelsStore from '../../../store/channels';
 import useEPGsStore from '../../../store/epgs';
 import useVODStore from '../../../store/useVODStore';
 import usePlaylistsStore from '../../../store/playlists';
+import useServerGroupsStore from '../../../store/serverGroups';
 import useStreamProfilesStore from '../../../store/streamProfiles';
 import * as M3uUtils from '../../../utils/forms/M3uUtils.js';
 import * as DummyEpgUtils from '../../../utils/forms/DummyEpgUtils.js';
@@ -372,6 +374,13 @@ const setupStores = (overrides = {}) => {
     const state = {
       userAgents: overrides.userAgents || [],
       fetchUserAgents,
+    };
+    return selector(state);
+  });
+
+  useServerGroupsStore.mockImplementation((selector) => {
+    const state = {
+      serverGroups: overrides.serverGroups || [],
     };
     return selector(state);
   });
