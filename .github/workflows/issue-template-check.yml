@@ -1,9 +1,12 @@
+name: "Issue: Template Check"
+
 on:
   issues:
     types: [opened, reopened]
 
 jobs:
   check:
+    if: github.repository == 'Dispatcharr/Dispatcharr'
     runs-on: ubuntu-latest
     steps:
 

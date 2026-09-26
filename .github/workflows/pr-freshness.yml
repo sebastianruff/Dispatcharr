@@ -1,3 +1,5 @@
+name: "PR: Freshness"
+
 on:
   schedule:
     - cron: '0 16 */2 * *'
@@ -5,6 +7,7 @@ on:
 
 jobs:
   freshness:
+    if: github.repository == 'Dispatcharr/Dispatcharr'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/create-github-app-token@v1
@@ -16,6 +19,7 @@ jobs:
       - uses: Dispatcharr/repo-bot/actions/pr-freshness@v1
         with:
           github-token: ${{ steps.app-token.outputs.token }}
+          marker-author: dispatcharr-issues-bot[bot]
           days-before-stale: 7
           days-before-close: 7
           check-conflicts: true

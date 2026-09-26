@@ -1,9 +1,12 @@
+name: "PR: Compliance Check"
+
 on:
   pull_request_target:
     types: [opened, reopened, edited]
 
 jobs:
   check:
+    if: github.repository == 'Dispatcharr/Dispatcharr'
     runs-on: ubuntu-latest
     steps:
 
