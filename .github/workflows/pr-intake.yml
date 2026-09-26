@@ -24,7 +24,7 @@ env:
 
 jobs:
   label:
-    if: github.event_name == 'pull_request_target'
+    if: github.repository == 'Dispatcharr/Dispatcharr' && github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/create-github-app-token@v2
@@ -52,7 +52,7 @@ jobs:
             });
 
   backfill:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.repository == 'Dispatcharr/Dispatcharr' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
       DRY_RUN: ${{ inputs.dry_run }}
