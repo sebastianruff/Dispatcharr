@@ -19,6 +19,7 @@ class StreamTsRedirectValidationTests(SimpleTestCase):
         channel.name = "Test Channel"
         stream_profile = MagicMock()
         stream_profile.is_redirect.return_value = True
+        stream_profile.is_direct.return_value = False
         channel.get_stream_profile.return_value = stream_profile
         channel.release_stream.return_value = True
         return channel
@@ -141,3 +142,88 @@ class StreamTsRedirectValidationTests(SimpleTestCase):
         self.assertEqual(response.url, self.provider_url)
         mock_validate_stream_url.assert_called_once()
         channel.release_stream.assert_called_once()
+
+    @patch("apps.proxy.live_proxy.views.close_old_connections")
+    @patch("apps.proxy.live_proxy.views.ChannelService.initialize_channel")
+    @patch("apps.proxy.live_proxy.url_utils.validate_stream_url")
+    @patch("apps.proxy.config.TSConfig.get_validate_redirect_urls", return_value=True)
+    @patch("apps.proxy.live_proxy.views.generate_stream_url")
+    @patch(
+        "apps.proxy.live_proxy.views.ChannelService.is_channel_unavailable_for_new_clients",
+        return_value=False,
+    )
+    @patch("apps.proxy.live_proxy.views.get_stream_object")
+    @patch("apps.proxy.live_proxy.views.network_access_allowed", return_value=True)
+    @patch("apps.proxy.live_proxy.views.ProxyServer")
+    def test_direct_hands_off_without_validation_or_proxy(
+        self,
+        mock_proxy_cls,
+        _network_ok,
+        mock_get_stream_object,
+        _unavailable,
+        mock_generate_stream_url,
+        _mock_validate_setting,
+        mock_validate_stream_url,
+        mock_initialize_channel,
+        _mock_close,
+    ):
+        mock_generate_stream_url.return_value = (
+            self.provider_url, "ua", False, "None", True, None, 42,
+        )
+        channel = self._channel()
+        profile = channel.get_stream_profile.return_value
+        profile.is_redirect.return_value = False
+        profile.is_direct.return_value = True
+        mock_get_stream_object.return_value = channel
+        mock_proxy_cls.get_instance.return_value = self._proxy_server()
+
+        from apps.proxy.live_proxy.views import stream_ts
+
+        response = stream_ts(self._request(), self.channel_id)
+
+        self.assertIsInstance(response, HttpResponseRedirect)
+        self.assertEqual(response.url, self.provider_url)
+        mock_validate_stream_url.assert_not_called()
+        mock_initialize_channel.assert_not_called()
+        channel.release_stream.assert_called_once()
+
+    @patch("apps.proxy.live_proxy.views.close_old_connections")
+    @patch("apps.m3u.utils.get_allowed_m3u_profiles", return_value={})
+    @patch("apps.proxy.live_proxy.views.check_user_stream_limits", return_value=True)
+    @patch("apps.proxy.live_proxy.views.generate_stream_url")
+    @patch(
+        "apps.proxy.live_proxy.views.ChannelService.is_channel_unavailable_for_new_clients",
+        return_value=False,
+    )
+    @patch("apps.proxy.live_proxy.views.get_stream_object")
+    @patch("apps.proxy.live_proxy.views.network_access_allowed", return_value=True)
+    @patch("apps.proxy.live_proxy.views.ProxyServer")
+    def test_direct_passes_user_profile_allowlist_to_stream_selection(
+        self,
+        mock_proxy_cls,
+        _network_ok,
+        mock_get_stream_object,
+        _unavailable,
+        mock_generate_stream_url,
+        _stream_limits,
+        mock_get_allowed_profiles,
+        _mock_close,
+    ):
+        channel = self._channel()
+        profile = channel.get_stream_profile.return_value
+        profile.is_redirect.return_value = False
+        profile.is_direct.return_value = True
+        mock_get_stream_object.return_value = channel
+        mock_proxy_cls.get_instance.return_value = self._proxy_server()
+        mock_generate_stream_url.return_value = (
+            None, "ua", False, "None", False, "No allowed streams", None,
+        )
+        user = MagicMock(is_authenticated=True)
+
+        from apps.proxy.live_proxy.views import stream_ts
+
+        response = stream_ts(self._request(), self.channel_id, user=user)
+
+        self.assertEqual(response.status_code, 503)
+        mock_get_allowed_profiles.assert_called_once_with(user)
+        mock_generate_stream_url.assert_called_once_with(self.channel_id, user, {})

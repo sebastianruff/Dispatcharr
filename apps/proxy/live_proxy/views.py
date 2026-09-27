@@ -175,7 +175,8 @@ def stream_ts(request, channel_id, user=None, force_output_format=None):
         channel = get_stream_object(channel_id)
         channel_display_name = getattr(channel, "name", None)
         allowed_m3u_profiles = None
-        if user and channel.get_stream_profile().is_redirect():
+        stream_profile = channel.get_stream_profile()
+        if user and (stream_profile.is_redirect() or stream_profile.is_direct() is True):
             from apps.m3u.utils import get_allowed_m3u_profiles
 
             allowed_m3u_profiles = get_allowed_m3u_profiles(user)
@@ -424,7 +425,8 @@ def stream_ts(request, channel_id, user=None, force_output_format=None):
 
                     # Generate transcode command if needed
                     stream_profile = channel.get_stream_profile()
-                    if stream_profile.is_redirect():
+                    is_direct = stream_profile.is_direct() is True
+                    if stream_profile.is_redirect() or is_direct:
                         from apps.proxy.config import TSConfig
 
                         def _redirect_response(url):
@@ -446,14 +448,16 @@ def stream_ts(request, channel_id, user=None, force_output_format=None):
                                 )
                             connection_allocated = False
 
+                        # Direct hands the URL to the client without probing it on the server.
+                        if is_direct:
+                            _release_redirect_slot()
+                            return _redirect_response(stream_url)
+
                         # Optional pre-check (Settings → Proxy → Validate Redirect URLs).
                         # Some providers abort HEAD/GET probes and waste a connection
                         # slot; disabling skips failover probing and redirects immediately.
                         if not TSConfig.get_validate_redirect_urls():
-                            logger.info(
-                                f"[{client_id}] Redirect URL validation disabled; "
-                                f"handing off to {stream_url}"
-                            )
+                            logger.info(f"[{client_id}] Redirect URL validation disabled; handing off to client")
                             _release_redirect_slot()
                             return _redirect_response(stream_url)
 
