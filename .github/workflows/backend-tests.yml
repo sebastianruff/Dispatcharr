@@ -136,7 +136,8 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-      options: --entrypoint ""
+      # Reap orphaned process-group children in the process-tree cleanup tests.
+      options: --init --entrypoint ""
     strategy:
       max-parallel: 6
       fail-fast: false
